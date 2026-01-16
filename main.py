@@ -32,6 +32,10 @@ def get_anime_list():
                 english
                 romaji
               }
+              nextAiringEpisode {
+                episode
+                timeUntilAiring
+              }
             }
           }
         }
@@ -53,7 +57,7 @@ if __name__ == "__main__":
     data = get_anime_list()
 
     if data:
-        final_message = "--- My Current Anime List --- \n\n"
+        final_message = "--- My Current Anime Schedule --- \n\n"
 
         all_lists = data["data"]["MediaListCollection"]["lists"]
 
@@ -69,8 +73,18 @@ if __name__ == "__main__":
                     if title is None:
                         title = entry["media"]["title"]["romaji"]
 
-                    final_message += f"- {title}\n"
+                    next_ep = entry["media"]["nextAiringEpisode"]
 
+                    if next_ep is not None:
+                        ep_num = next_ep["episode"]
+                        seconds = next_ep["timeUntilAiring"]
+
+                        days = seconds // 86400
+                        hours = (seconds % 86400) // 3600
+
+                        final_message += f"*{title}* \n    -->Episode {ep_num}: {days} days, {hours} hours left.\n\n"
+                    else:
+                        final_message += f"*{title}* (Up to date / Finished)\n\n"
                 final_message += "\n"
 
         print("Sending to Telegram...")
