@@ -1,48 +1,78 @@
 import requests
 import json
+import secrets
 
-url = "https://graphql.anilist.co"
+ANILIST_URL = "https://graphql.anilist.co"
+ANILIST_USERNAME = "MertNaci"
 
-query = '''
-query ($userName: String) {
-  MediaListCollection(userName: $userName, type: ANIME) {
-    lists {
-      name
-      entries {
-        media {
-          title {
-            english
-            romaji
+def send_telegram_message(message):
+    token = secrets.TELEGRAM_TOKEN
+    chat_id = secrets.CHAT_ID
+    send_url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+
+    response = requests.post(send_url, json=payload)
+    if response.status_code != 200:
+        print(f"Telegram Error: {response.text}")
+
+def get_anime_list():
+    query = """
+    query ($userName: String) {
+      MediaListCollection(userName: $userName, type: ANIME) {
+        lists {
+          name
+          entries {
+            media {
+              title {
+                english
+                romaji
+              }
+            }
           }
         }
       }
     }
-  }
-}
-'''
+    """
 
-variables = {
-    "userName": "MertNaci"
-}
+    variables = {"userName": ANILIST_USERNAME}
+    response = requests.post(ANILIST_URL, json={"query": query, "variables": variables})
 
-response = requests.post(url, json={"query": query, "variables": variables})
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"AniList Error: {response.text}")
+        return None
 
-if response.status_code == 200:
-    data = response.json()
+if __name__ == "__main__":
+    print("Fetching data...")
+    data = get_anime_list()
 
-    all_lists = data["data"]["MediaListCollection"]["lists"]
-    for single_list in all_lists:
-        list_name = single_list["name"]
-        print(f"\n--- {list_name} List ---")
+    if data:
+        final_message = "--- My Current Anime List --- \n\n"
 
-        entries = single_list["entries"]
-        for entry in entries:
-            anime_title = entry["media"]["title"]["english"]
-            if anime_title is None:
-                anime_title = entry["media"]["title"]["romaji"]
-            print(f"* {anime_title}")
+        all_lists = data["data"]["MediaListCollection"]["lists"]
 
-else:
-    print("Error!")
-    print("Error code:", response.status_code)
-    print("Detail:", response.text)
+        for single_list in all_lists:
+            list_name = single_list["name"]
+
+            if list_name == "Watching" or list_name == "Current":
+                final_message += f"-- {list_name} --\n"
+
+                entries = single_list["entries"]
+                for entry in entries:
+                    title = entry["media"]["title"]["english"]
+                    if title is None:
+                        title = entry["media"]["title"]["romaji"]
+
+                    final_message += f"- {title}\n"
+
+                final_message += "\n"
+
+        print("Sending to Telegram...")
+        send_telegram_message(final_message)
+        print("Operation complete!")
