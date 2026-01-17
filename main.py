@@ -1,6 +1,7 @@
 import requests
-import json
 import secrets
+import time
+from datetime import datetime,timedelta,timezone
 
 ANILIST_URL = "https://graphql.anilist.co"
 ANILIST_USERNAME = "MertNaci"
@@ -19,6 +20,8 @@ def send_telegram_message(message):
     response = requests.post(send_url, json=payload)
     if response.status_code != 200:
         print(f"Telegram Error: {response.text}")
+    else:
+        print("Notification sent successfully.")
 
 def get_anime_list():
     query = """
@@ -32,9 +35,11 @@ def get_anime_list():
                 english
                 romaji
               }
-              nextAiringEpisode {
-                episode
-                timeUntilAiring
+              airingSchedule(notYetAired: false) {
+                nodes {
+                   episode
+                   airingAt
+                }
               }
             }
           }
@@ -42,7 +47,6 @@ def get_anime_list():
       }
     }
     """
-
     variables = {"userName": ANILIST_USERNAME}
     response = requests.post(ANILIST_URL, json={"query": query, "variables": variables})
 
@@ -57,7 +61,10 @@ if __name__ == "__main__":
     data = get_anime_list()
 
     if data:
-        final_message = "--- My Current Anime Schedule --- \n\n"
+        notification_message = "**New Episode Alert!** \n\n_Aired within the last 24 hours:_\n\n"
+        has_new_episode = False
+
+        current_time = int(time.time())
 
         all_lists = data["data"]["MediaListCollection"]["lists"]
 
@@ -65,28 +72,34 @@ if __name__ == "__main__":
             list_name = single_list["name"]
 
             if list_name == "Watching" or list_name == "Current":
-                final_message += f"-- {list_name} --\n"
-
                 entries = single_list["entries"]
+
                 for entry in entries:
-                    title = entry["media"]["title"]["english"]
-                    if title is None:
-                        title = entry["media"]["title"]["romaji"]
+                    schedule_nodes = entry["media"]["airingSchedule"]["nodes"]
 
-                    next_ep = entry["media"]["nextAiringEpisode"]
+                    if schedule_nodes:
+                        last_aired_ep = schedule_nodes[-1]
+                        ep_num = last_aired_ep["episode"]
+                        airing_at = last_aired_ep["airingAt"]
 
-                    if next_ep is not None:
-                        ep_num = next_ep["episode"]
-                        seconds = next_ep["timeUntilAiring"]
+                        time_difference = current_time - airing_at
 
-                        days = seconds // 86400
-                        hours = (seconds % 86400) // 3600
+                        if 0 <= time_difference <= 86400:
+                            has_new_episode = True
 
-                        final_message += f"*{title}* \n    -->Episode {ep_num}: {days} days, {hours} hours left.\n\n"
-                    else:
-                        final_message += f"*{title}* (Up to date / Finished)\n\n"
-                final_message += "\n"
+                            title = entry["media"]["title"]["english"]
+                            if title is None:
+                                title = entry["media"]["title"]["romaji"]
 
-        print("Sending to Telegram...")
-        send_telegram_message(final_message)
-        print("Operation complete!")
+                            dt_object = datetime.fromtimestamp(airing_at, timezone.utc) + timedelta(hours=3)
+                            time_str = dt_object.strftime("%H:%M")
+
+                            notification_message += f"*{title}*\n   -->Episode {ep_num} aired! (Time: {time_str})\n\n"
+
+        if has_new_episode:
+            print("New aired episode found, sending message...")
+            send_telegram_message(notification_message)
+        else:
+            print("No new episodes aired in the last 24 hours.")
+
+    print("Operation complete!")
