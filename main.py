@@ -23,7 +23,7 @@ def send_telegram_message(message):
     else:
         print("Notification sent successfully.")
 
-def get_anime_list():
+def get_user_watching_ids():
     query = """
     query ($userName: String) {
       MediaListCollection(userName: $userName, type: ANIME) {
@@ -31,15 +31,10 @@ def get_anime_list():
           name
           entries {
             media {
+              id
               title {
                 english
                 romaji
-              }
-              airingSchedule(notYetAired: false) {
-                nodes {
-                   episode
-                   airingAt
-                }
               }
             }
           }
@@ -50,6 +45,56 @@ def get_anime_list():
     variables = {"userName": ANILIST_USERNAME}
     response = requests.post(ANILIST_URL, json={"query": query, "variables": variables})
 
+    if response.status_code != 200:
+        print(f"AniList Error: {response.text}")
+        return {}
+
+    data = response.json()
+    anime_map = {}
+
+    if data.get("data"):
+        for single_list in data["data"]["MediaListCollection"]["lists"]:
+            if single_list["name"] == "Watching" or single_list["name"] == "Current":
+                for entry in single_list["entries"]:
+                    media_id = entry["media"]["id"]
+
+                    title = entry["media"]["title"]["english"]
+                    if title is None:
+                        title = entry["media"]["title"]["romaji"]
+
+                    anime_map[media_id] = title
+
+    return anime_map
+
+def check_recent_episodes(anime_map):
+    if not anime_map:
+        return None
+
+    current_time = int(time.time())
+    yesterday_time = current_time - 86400
+
+    media_ids = list(anime_map.keys())
+
+    query = """
+    query ($mediaIds: [Int], $airingAfter: Int, $airingBefore: Int) {
+      Page(perPage: 50) {
+        airingSchedules(mediaId_in: $mediaIds, airingAt_greater: $airingAfter, airingAt_lesser: $airingBefore, sort: TIME_DESC) {
+          episode
+          airingAt
+          mediaId
+        }
+      }
+    }
+    """
+
+    variables = {
+        "mediaIds": media_ids,
+        "airingAfter": yesterday_time,
+        "airingBefore": current_time
+    }
+
+    response = requests.post(ANILIST_URL, json={"query": query, "variables": variables})
+
     if response.status_code == 200:
         return response.json()
     else:
@@ -57,49 +102,44 @@ def get_anime_list():
         return None
 
 if __name__ == "__main__":
-    print("Fetching data...")
-    data = get_anime_list()
+    print("Step 1: Fetching watching list...")
+    my_anime_map = get_user_watching_ids()
 
-    if data:
-        notification_message = "**New Episode Alert!** \n\n_Aired within the last 24 hours:_\n\n"
+    if my_anime_map:
+        print(f"Found {len(my_anime_map)} watching anime. Checking last 24 hours...")
+
+        data = check_recent_episodes(my_anime_map)
+
         has_new_episode = False
+        notification_message = "**New Episode Alert!** \n\n_Aired within the last 24 hours:_\n\n"
 
-        current_time = int(time.time())
+        if data and data.get("data"):
+            schedules = data["data"]["Page"]["airingSchedules"]
 
-        all_lists = data["data"]["MediaListCollection"]["lists"]
+            if schedules:
+                has_new_episode = True
 
-        for single_list in all_lists:
-            list_name = single_list["name"]
+                for item in schedules:
+                    ep_num = item["episode"]
+                    airing_at = item["airingAt"]
+                    media_id = item["mediaId"]
 
-            if list_name == "Watching" or list_name == "Current":
-                entries = single_list["entries"]
+                    anime_name = my_anime_map.get(media_id, "Unknown Anime")
 
-                for entry in entries:
-                    schedule_nodes = entry["media"]["airingSchedule"]["nodes"]
+                    dt_object = datetime.fromtimestamp(airing_at, timezone.utc) + timedelta(hours=3)
+                    time_str = dt_object.strftime("%H:%M")
 
-                    if schedule_nodes:
-                        last_aired_ep = schedule_nodes[-1]
-                        ep_num = last_aired_ep["episode"]
-                        airing_at = last_aired_ep["airingAt"]
+                    current_ts = int(time.time())
+                    hours_ago = (current_ts - airing_at) // 3600
 
-                        time_difference = current_time - airing_at
+                    notification_message += f"*{anime_name}*\n   --> Episode {ep_num} aired! ({time_str} - {hours_ago} hrs ago)\n\n"
 
-                        if 0 <= time_difference <= 86400:
-                            has_new_episode = True
-
-                            title = entry["media"]["title"]["english"]
-                            if title is None:
-                                title = entry["media"]["title"]["romaji"]
-
-                            dt_object = datetime.fromtimestamp(airing_at, timezone.utc) + timedelta(hours=3)
-                            time_str = dt_object.strftime("%H:%M")
-
-                            notification_message += f"*{title}*\n   -->Episode {ep_num} aired! (Time: {time_str})\n\n"
-
-        if has_new_episode:
-            print("New aired episode found, sending message...")
-            send_telegram_message(notification_message)
+            if has_new_episode:
+                print("New episodes found, sending to Telegram...")
+                send_telegram_message(notification_message)
+            else:
+                print("No new episodes aired in the last 24 hours.")
         else:
-            print("No new episodes aired in the last 24 hours.")
-
-    print("Operation complete!")
+            print("Data could not be fetched or is empty.")
+    else:
+        print("Watching list is empty or could not be fetched.")
