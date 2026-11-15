@@ -10,7 +10,7 @@ An automated anime tracking system that fetches your "Watching" list from the [A
 * **Secure:** Uses GitHub Secrets to keep your Telegram Bot Token and Chat ID completely hidden.
 
 ## 🛠️ Technologies Used
-* **Python 3.9**
+* **Python 3.12**
 * **AniList GraphQL API** (for fetching user data & airing schedules)
 * **Telegram Bot API** (for push notifications)
 * **GitHub Actions** (for cron job automation)
